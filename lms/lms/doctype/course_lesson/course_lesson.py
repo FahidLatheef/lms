@@ -8,6 +8,7 @@ from frappe.utils.telemetry import capture
 from lms.lms.utils import get_course_progress
 from ...md import find_macros
 import json
+from pydantic import BaseModel
 
 
 class CourseLesson(Document):
@@ -73,8 +74,14 @@ class CourseLesson(Document):
 		return [frappe.get_doc("LMS Exercise", name) for name in exercises]
 
 
+class SCORMDetails(BaseModel):
+	is_complete: bool
+	location: str | None = None
+	content: str | None = None
+
+
 @frappe.whitelist()
-def save_progress(lesson, course):
+def save_progress(lesson: str, course: str, scorm_details: SCORMDetails | None = None):
 	membership = frappe.db.exists(
 		"LMS Enrollment", {"course": course, "member": frappe.session.user}
 	)
@@ -82,14 +89,24 @@ def save_progress(lesson, course):
 		return 0
 
 	frappe.db.set_value("LMS Enrollment", membership, "current_lesson", lesson)
-	already_completed = frappe.db.exists(
+	is_progress_already_exists = frappe.db.exists(
 		"LMS Course Progress", {"lesson": lesson, "member": frappe.session.user}
 	)
+	is_completed = frappe.db.exists(
+		"LMS Course Progress",
+		{"lesson": lesson, "member": frappe.session.user, "status": "Complete"},
+	)
+	is_scorm = scorm_details is not None
 
 	quiz_completed = get_quiz_progress(lesson)
 	assignment_completed = get_assignment_progress(lesson)
 
-	if not already_completed and quiz_completed and assignment_completed:
+	if (
+		not is_progress_already_exists
+		and quiz_completed
+		and assignment_completed
+		and not is_scorm
+	):
 		frappe.get_doc(
 			{
 				"doctype": "LMS Course Progress",
@@ -98,6 +115,31 @@ def save_progress(lesson, course):
 				"member": frappe.session.user,
 			}
 		).save(ignore_permissions=True)
+	elif is_scorm and not is_completed:
+		if not is_progress_already_exists:
+			# Create new progress
+			frappe.get_doc(
+				{
+					"doctype": "LMS Course Progress",
+					"lesson": lesson,
+					"status": "Complete" if scorm_details.is_complete else "Partially Complete",
+					"member": frappe.session.user,
+					"scorm_location": "" if scorm_details.is_complete else scorm_details.location,
+					"scorm_content": "" if scorm_details.is_complete else scorm_details.content,
+				}
+			).save(ignore_permissions=True)
+		else:
+			frappe.db.set_value(
+				"LMS Course Progress",
+				is_progress_already_exists,
+				{
+					"lesson": lesson,
+					"status": "Complete" if scorm_details.is_complete else "Partially Complete",
+					"member": frappe.session.user,
+					"scorm_location": "" if scorm_details.is_complete else scorm_details.location,
+					"scorm_content": "" if scorm_details.is_complete else scorm_details.content,
+				},
+			)
 
 	progress = get_course_progress(course)
 	capture_progress_for_analytics(progress, course)

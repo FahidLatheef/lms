@@ -86,25 +86,38 @@ const enrollment = createListResource({
 })
 
 const getDataFromLMS = (key) => {
-	if (key == 'cmi.core.lesson_status') {
-		if (progress.data?.status == 'Complete') {
-			return 'passed'
-		}
-		return 'incomplete'
+	if (key === 'cmi.core.lesson_status') {
+		return progress.data?.status === 'Complete' ? 'passed' : 'incomplete'
 	}
+	// else if (key === 'cmi.suspend_data') {
+	// 	return progress.data?.scorm_content || ''
+	// } else if (key === 'cmi.core.lesson_location') {
+	// 	return progress.data?.scorm_location || ''
+	// }
 	return ''
 }
 
 const saveDataToLMS = (key, value) => {
 	if (key == 'cmi.core.lesson_status' && value == 'passed') {
 		saveProgress()
+	} else if (key == 'cmi.suspend_data') {
+		saveProgress({
+			is_complete: false,
+			content: value,
+		})
+	} else if (key == 'cmi.core.lesson_location') {
+		saveProgress({
+			is_complete: false,
+			location: value,
+		})
 	}
 }
 
-const saveProgress = () => {
+const saveProgress = (scorm_details = null) => {
 	call('lms.lms.doctype.course_lesson.course_lesson.save_progress', {
 		lesson: chapter.doc.lessons[0].lesson,
 		course: props.courseName,
+		scorm_details: scorm_details,
 	})
 }
 
@@ -113,7 +126,7 @@ const progress = createResource({
 	makeParams(values) {
 		return {
 			doctype: 'LMS Course Progress',
-			fieldname: 'status',
+			fieldname: ['status', 'scorm_content', 'scorm_location'],
 			filters: {
 				member: user.data?.name,
 				lesson: chapter.doc.lessons[0].lesson,
